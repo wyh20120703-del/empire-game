@@ -1274,6 +1274,7 @@ func _on_game_started():
 		_update_resource_display()
 		_update_alliance_display()
 	else:
+		game_manager.hex_map = hex_map
 		game_manager.nation_resource_updated.connect(_on_client_first_state, CONNECT_ONE_SHOT)
 
 func _on_client_first_state(_nation_id: int):
