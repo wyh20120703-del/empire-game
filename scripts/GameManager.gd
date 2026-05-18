@@ -31,6 +31,7 @@ var net_mode: bool = false
 var is_net_authority: bool = true
 var _net_timer: float = 0.0
 const _NET_INTERVAL := 1.0
+var _territory_dirty: bool = false
 
 var _peer_to_nation: Dictionary = {}
 var _player_nation_ids: Array = []
@@ -77,8 +78,8 @@ func _spawn_nations(count: int):
 		# 首都要塞：2000 血，不可绕过
 		var cap_g = _create_garrison(i, positions[i])
 		cap_g.is_capital = true
-		cap_g.hp = 2000
-		cap_g.max_hp = 2000
+		cap_g.hp = 2100
+		cap_g.max_hp = 2100
 		cap_g.attack = 120
 		nations.append(n)
 
@@ -128,6 +129,9 @@ func _count_plains(nation_id: int) -> int:
 func _process(delta: float):
 	if not game_active:
 		return
+	for a in armies:
+		if is_instance_valid(a) and a.move_cooldown > 0.0:
+			a.move_cooldown -= delta
 	if not is_net_authority:
 		return
 	resource_timer += delta
@@ -194,6 +198,7 @@ func _claim_tile(hex: Vector2i, nation_id: int):
 	var old_owner = hex_map.get_tile_owner(hex)
 	hex_map.claim_territory(hex, nation_id)
 	if old_owner != nation_id:
+		_territory_dirty = true
 		var n = _get_nation(nation_id)
 		if n:
 			n.population += 10
@@ -242,16 +247,17 @@ func try_relocate_capital(nation_id: int, new_hex: Vector2i) -> bool:
 	var new_g = _get_garrison_at(new_hex)
 	if new_g != null:
 		new_g.is_capital = true
-		new_g.max_hp = 2000
+		new_g.max_hp = 2100
 		new_g.hp = min(new_g.hp + 500, new_g.max_hp)
 		new_g.attack = 120
 		new_g.queue_redraw()
 	else:
 		var cap_g = _create_garrison(nation_id, new_hex)
 		cap_g.is_capital = true
-		cap_g.hp = 2000
-		cap_g.max_hp = 2000
+		cap_g.hp = 2100
+		cap_g.max_hp = 2100
 		cap_g.attack = 120
+	_territory_dirty = true
 	nation_resource_updated.emit(nation_id)
 	return true
 
@@ -291,6 +297,7 @@ func try_build_farm(nation_id: int, hex: Vector2i) -> bool:
 	n.farms_built += 1
 	hex_map.farm_data[hex] = nation_id
 	hex_map.queue_redraw()
+	_territory_dirty = true
 	nation_resource_updated.emit(nation_id)
 	return true
 
@@ -302,6 +309,7 @@ func try_build_mine(nation_id: int, hex: Vector2i) -> bool:
 	n.mines_built += 1
 	hex_map.mine_data[hex] = nation_id
 	hex_map.queue_redraw()
+	_territory_dirty = true
 	nation_resource_updated.emit(nation_id)
 	return true
 
@@ -445,6 +453,8 @@ func _create_army(nation_id: int, hex: Vector2i):
 	return army
 
 func try_move_army(army, target_hex: Vector2i) -> bool:
+	if army.move_cooldown > 0.0:
+		return false
 	if not hex_map.is_passable(target_hex):
 		return false
 	if not target_hex in hex_map.get_neighbors(army.hex_pos):
@@ -469,6 +479,7 @@ func try_move_army(army, target_hex: Vector2i) -> bool:
 
 	# 无阻碍：正常移动
 	army.move_to(target_hex)
+	army.move_cooldown = 0.5
 
 	_claim_tile(target_hex, army.nation_id)
 	_resolve_combat(target_hex, army)
@@ -624,6 +635,7 @@ func _defeat_nation(nation_id: int, conqueror_id: int):
 	var conquered_tiles = hex_map.get_nation_tiles(nation_id)
 	hex_map.transfer_all_tiles(nation_id, conqueror_id)
 	hex_map.transfer_buildings(nation_id, conqueror_id)
+	_territory_dirty = true
 	var n_conq = _get_nation(conqueror_id)
 	if n_conq:
 		n_conq.population += conquered_tiles.size() * 10
@@ -928,8 +940,31 @@ func _run_ai():
 					if can_build_mine_at(n.id, tile):
 						try_build_mine(n.id, tile)
 						break
-		# 尝试建造部署地（在前线空草地）
+		# 首都防御：周围2格有敌军时，优先在首都周围建部署地和军队
+		var capital_under_threat = false
 		if n.production >= 30:
+			var threat_hexes = []
+			for nb1 in hex_map.get_neighbors(n.capital_pos):
+				threat_hexes.append(nb1)
+				for nb2 in hex_map.get_neighbors(nb1):
+					if not nb2 in threat_hexes:
+						threat_hexes.append(nb2)
+			for th in threat_hexes:
+				var enemy_there = false
+				for a in armies:
+					if is_instance_valid(a) and a.hex_pos == th and a.nation_id != n.id and not are_allied(n.id, a.nation_id):
+						enemy_there = true; break
+				if enemy_there:
+					capital_under_threat = true; break
+			if capital_under_threat:
+				for nb in hex_map.get_neighbors(n.capital_pos):
+					if can_build_garrison_at(n.id, nb):
+						try_build_garrison(n.id, nb)
+						break
+				if n.can_build_army():
+					try_build_army(n.id)
+		# 尝试建造部署地（在前线空草地）
+		if not capital_under_threat and n.production >= 30:
 			var tiles = hex_map.get_nation_tiles(n.id)
 			for tile in tiles:
 				if can_build_garrison_at(n.id, tile):
@@ -1204,11 +1239,17 @@ func _build_state() -> Dictionary:
 	var caps = {}
 	for hex in hex_map.capital_data:
 		caps["%d_%d" % [hex.x, hex.y]] = hex_map.capital_data[hex]
-	return {
+	var result = {
 		"nations": nd_arr, "armies": army_arr, "garrisons": gar_arr,
-		"owner": own, "farms": farms, "mines": mines, "caps": caps,
 		"alliances": alliances.duplicate(true), "active": game_active
 	}
+	if _territory_dirty:
+		result["owner"] = own
+		result["farms"] = farms
+		result["mines"] = mines
+		result["caps"] = caps
+		_territory_dirty = false
+	return result
 
 func _apply_state(state: Dictionary):
 	# 更新各国数据

@@ -27,6 +27,9 @@ var selected_hex: Vector2i = Vector2i(-999, -999)
 var dragging: bool = false
 var _left_holding: bool = false
 var _drag_build_last_hex: Vector2i = Vector2i(-999, -999)
+# 长按建造模式：0=自动(军队/部署地) 1=农田 2=矿洞
+var _drag_mode: int = 0
+var _drag_mode_btn: Button
 var relocate_mode: bool = false
 var ally_mode: bool = false
 var missile_mode: bool = false
@@ -140,7 +143,7 @@ func _setup_ui():
 	# ── 左下：操作按钮（单列） ──
 	var bot_bg = ColorRect.new()
 	bot_bg.color = Color(0, 0, 0, 0.75)
-	bot_bg.size = Vector2(320, 346)
+	bot_bg.size = Vector2(320, 390)
 	bot_bg.position = Vector2(8, 386)
 	ui_layer.add_child(bot_bg)
 
@@ -195,6 +198,13 @@ func _setup_ui():
 	leave_ally_btn.position = Vector2(8, y); leave_ally_btn.size = Vector2(W, SH)
 	leave_ally_btn.add_theme_font_size_override("font_size", FS)
 	leave_ally_btn.pressed.connect(_on_leave_alliance_pressed); ui_layer.add_child(leave_ally_btn)
+	y += SH + GAP
+
+	_drag_mode_btn = Button.new()
+	_drag_mode_btn.text = "长按模式：自动 [Z]"
+	_drag_mode_btn.position = Vector2(8, y); _drag_mode_btn.size = Vector2(W, SH)
+	_drag_mode_btn.add_theme_font_size_override("font_size", FS)
+	_drag_mode_btn.pressed.connect(_on_drag_mode_pressed); ui_layer.add_child(_drag_mode_btn)
 	y += SH + GAP
 
 	missile_btn = Button.new()
@@ -323,6 +333,7 @@ func _input(event: InputEvent):
 			KEY_N: _on_decline_alliance()
 			KEY_X: _on_leave_alliance_pressed()
 			KEY_Q: _on_missile_pressed()
+			KEY_Z: _on_drag_mode_pressed()
 
 func _on_left_click():
 	var world_pos = get_global_mouse_position()
@@ -635,16 +646,35 @@ func _drag_build(hex: Vector2i):
 	var n = game_manager.get_player_nation()
 	if n == null or n.is_defeated:
 		return
-	if game_manager.can_deploy_at(game_manager.PLAYER_ID, hex):
-		if _is_client():
-			_send_net_action("build_army", {"hex": hex})
-		elif game_manager.try_build_army(game_manager.PLAYER_ID, hex) != null:
-			_update_resource_display()
-	elif game_manager.can_build_garrison_at(game_manager.PLAYER_ID, hex):
-		if _is_client():
-			_send_net_action("build_garrison", {"hex": hex})
-		elif game_manager.try_build_garrison(game_manager.PLAYER_ID, hex) != null:
-			_update_resource_display()
+	match _drag_mode:
+		0: # 自动：军队/部署地
+			if game_manager.can_deploy_at(game_manager.PLAYER_ID, hex):
+				if _is_client():
+					_send_net_action("build_army", {"hex": hex})
+				elif game_manager.try_build_army(game_manager.PLAYER_ID, hex) != null:
+					_update_resource_display()
+			elif game_manager.can_build_garrison_at(game_manager.PLAYER_ID, hex):
+				if _is_client():
+					_send_net_action("build_garrison", {"hex": hex})
+				elif game_manager.try_build_garrison(game_manager.PLAYER_ID, hex) != null:
+					_update_resource_display()
+		1: # 农田
+			if game_manager.can_build_farm_at(game_manager.PLAYER_ID, hex):
+				if _is_client():
+					_send_net_action("build_farm", {"hex": hex})
+				elif game_manager.try_build_farm(game_manager.PLAYER_ID, hex):
+					_update_resource_display()
+		2: # 矿洞
+			if game_manager.can_build_mine_at(game_manager.PLAYER_ID, hex):
+				if _is_client():
+					_send_net_action("build_mine", {"hex": hex})
+				elif game_manager.try_build_mine(game_manager.PLAYER_ID, hex):
+					_update_resource_display()
+
+func _on_drag_mode_pressed():
+	_drag_mode = (_drag_mode + 1) % 3
+	var labels = ["自动", "农田", "矿洞"]
+	_drag_mode_btn.text = "长按模式：%s [Z]" % labels[_drag_mode]
 
 func _on_resource_updated(nation_id: int):
 	if nation_id == game_manager.PLAYER_ID:

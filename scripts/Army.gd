@@ -5,8 +5,9 @@ var nation_id: int
 var hex_pos: Vector2i
 var hp: int = 1000
 var max_hp: int = 1000
-var attack: int = 150
+var attack: int = 350
 var nation_color: Color = Color.WHITE
+var move_cooldown: float = 0.0
 
 const HEX_SIZE = 55.0
 
