@@ -130,8 +130,14 @@ func _process(delta: float):
 	if not game_active:
 		return
 	for a in armies:
-		if is_instance_valid(a) and a.move_cooldown > 0.0:
+		if not is_instance_valid(a): continue
+		if a.move_cooldown > 0.0:
 			a.move_cooldown -= delta
+		if a.stamina < a.max_stamina:
+			a.stamina_regen_timer += delta
+			if a.stamina_regen_timer >= 2.0:
+				a.stamina_regen_timer = 0.0
+				a.stamina += 1
 	if not is_net_authority:
 		return
 	resource_timer += delta
@@ -455,6 +461,8 @@ func _create_army(nation_id: int, hex: Vector2i):
 func try_move_army(army, target_hex: Vector2i) -> bool:
 	if army.move_cooldown > 0.0:
 		return false
+	if army.stamina <= 0:
+		return false
 	if not hex_map.is_passable(target_hex):
 		return false
 	if not target_hex in hex_map.get_neighbors(army.hex_pos):
@@ -480,6 +488,8 @@ func try_move_army(army, target_hex: Vector2i) -> bool:
 	# 无阻碍：正常移动
 	army.move_to(target_hex)
 	army.move_cooldown = 0.5
+	army.stamina -= 1
+	army.stamina_regen_timer = 0.0
 
 	_claim_tile(target_hex, army.nation_id)
 	_resolve_combat(target_hex, army)
@@ -530,40 +540,27 @@ func _resolve_army_vs_garrison(army, garrison, garrison_hex: Vector2i):
 func _resolve_combat(hex: Vector2i, attacker):
 	var enemies = []
 	for other in armies:
-		if other != attacker and other.hex_pos == hex and other.nation_id != attacker.nation_id:
+		if other != attacker and other.hex_pos == hex and other.nation_id != attacker.nation_id \
+				and not are_allied(attacker.nation_id, other.nation_id):
 			enemies.append(other)
 	if enemies.size() == 0:
 		return
 
-	var defender_id = enemies[0].nation_id
-	var attacker_dmg_mult = 1.0
-
-	if hex_map.get_tile_owner(hex) == defender_id:
-		var friendly_count = 0
-		var enemy_count = 0
-		for nb in hex_map.get_neighbors(hex):
-			var hf = false; var he = false
-			for a in armies:
-				if a.hex_pos == nb:
-					if a.nation_id == defender_id: hf = true
-					elif a.nation_id == attacker.nation_id: he = true
-			if hf: friendly_count += 1
-			if he: enemy_count += 1
-		if friendly_count > enemy_count:
-			attacker_dmg_mult = 1.0 / 5.0
-		elif friendly_count == enemy_count:
-			attacker_dmg_mult = 1.0 / 2.0
-		else:
-			attacker_dmg_mult = 1.0 / 1.5
-
-	var dead = []
 	for enemy in enemies:
-		if enemy.take_damage(int(attacker.attack * attacker_dmg_mult)):
-			dead.append(enemy)
-		if attacker.take_damage(enemy.attack):
-			dead.append(attacker)
-	for d in dead:
-		_remove_army(d)
+		if not is_instance_valid(attacker): break
+		var a_hp = attacker.hp
+		var e_hp = enemy.hp
+		if a_hp > e_hp:
+			attacker.hp = a_hp - e_hp
+			attacker.queue_redraw()
+			_remove_army(enemy)
+		elif e_hp > a_hp:
+			enemy.hp = e_hp - a_hp
+			enemy.queue_redraw()
+			_remove_army(attacker)
+		else:
+			_remove_army(enemy)
+			_remove_army(attacker)
 
 func _remove_army(army):
 	if not army in armies:

@@ -8,6 +8,9 @@ var max_hp: int = 1000
 var attack: int = 350
 var nation_color: Color = Color.WHITE
 var move_cooldown: float = 0.0
+var stamina: int = 4
+var max_stamina: int = 4
+var stamina_regen_timer: float = 0.0
 
 const HEX_SIZE = 55.0
 

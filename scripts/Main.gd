@@ -432,10 +432,17 @@ func _on_left_click():
 
 	# 移动已选中军队（单机/主机）
 	if game_manager.selected_army != null:
-		var moved = game_manager.try_move_army(game_manager.selected_army, hex)
+		var army = game_manager.selected_army
+		if army.stamina <= 0:
+			selected_label.text = "军队耐力不足！（%d/%d）休息3秒恢复" % [army.stamina, army.max_stamina]
+			return
+		var moved = game_manager.try_move_army(army, hex)
 		if moved:
 			game_manager.selected_army = null
-			selected_label.text = ""
+			if army.stamina <= 1:
+				selected_label.text = "耐力不足，军队需要休息！（%d/%d）" % [army.stamina, army.max_stamina]
+			else:
+				selected_label.text = ""
 			_hide_context()
 			_update_resource_display()
 			return
@@ -444,7 +451,7 @@ func _on_left_click():
 	var army = game_manager.select_army_at(hex)
 	if army != null:
 		var n = game_manager.get_nation(army.nation_id)
-		selected_label.text = "已选中 %s 军队  HP: %d" % [n.nation_name, army.hp]
+		selected_label.text = "已选中 %s 军队  HP:%d  耐力:%d/%d" % [n.nation_name, army.hp, army.stamina, army.max_stamina]
 		_show_context(hex)
 		return
 
