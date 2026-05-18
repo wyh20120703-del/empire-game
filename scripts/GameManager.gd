@@ -468,10 +468,7 @@ func try_move_army(army, target_hex: Vector2i) -> bool:
 	if not target_hex in hex_map.get_neighbors(army.hex_pos):
 		return false
 
-	# 结盟：不可进入盟友领土
 	var target_owner = hex_map.get_tile_owner(target_hex)
-	if target_owner >= 0 and target_owner != army.nation_id and are_allied(army.nation_id, target_owner):
-		return false
 
 	# 目标格已有己方或盟友军队：禁止移入
 	var existing_army = _get_army_at(target_hex)
@@ -490,6 +487,11 @@ func try_move_army(army, target_hex: Vector2i) -> bool:
 	army.move_cooldown = 0.5
 	army.stamina -= 1
 	army.stamina_regen_timer = 0.0
+
+	# 盟友领土：经过但不占领
+	if target_owner >= 0 and target_owner != army.nation_id and are_allied(army.nation_id, target_owner):
+		hex_map.queue_redraw()
+		return true
 
 	_claim_tile(target_hex, army.nation_id)
 	_resolve_combat(target_hex, army)
@@ -955,9 +957,27 @@ func _run_ai():
 					capital_under_threat = true; break
 			if capital_under_threat:
 				for nb in hex_map.get_neighbors(n.capital_pos):
-					if can_build_garrison_at(n.id, nb):
+					if hex_map.get_tile_owner(nb) != n.id:
+						continue
+					var terrain = hex_map.get_terrain(nb)
+					if terrain == TerrainType.Type.WATER or terrain == TerrainType.Type.MOUNTAIN:
+						continue
+					# 拆除农田
+					if nb in hex_map.farm_data and hex_map.farm_data[nb] == n.id:
+						hex_map.farm_data.erase(nb)
+						n.population += 10
+						_territory_dirty = true
+					# 拆除矿洞
+					if nb in hex_map.mine_data and hex_map.mine_data[nb] == n.id:
+						hex_map.mine_data.erase(nb)
+						n.population += 10
+						_territory_dirty = true
+					# 拆除普通部署地（非首都）后重建，或直接建
+					var existing_g = _get_garrison_at(nb)
+					if existing_g != null and existing_g.is_capital:
+						continue
+					if existing_g == null and can_build_garrison_at(n.id, nb):
 						try_build_garrison(n.id, nb)
-						break
 				if n.can_build_army():
 					try_build_army(n.id)
 		# 尝试建造部署地（在前线空草地）
