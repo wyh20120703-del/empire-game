@@ -71,6 +71,7 @@ func _setup_hex_map():
 func _setup_game_manager():
 	game_manager = GameManager.new()
 	add_child(game_manager)
+	game_manager.hex_map = hex_map
 	game_manager.nation_resource_updated.connect(_on_resource_updated)
 	game_manager.nation_defeated.connect(_on_nation_defeated)
 	game_manager.game_over.connect(_on_game_over)
