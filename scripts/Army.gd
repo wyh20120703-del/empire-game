@@ -11,6 +11,7 @@ var move_cooldown: float = 0.0
 var stamina: int = 4
 var max_stamina: int = 4
 var stamina_regen_timer: float = 0.0
+var deploy_target: Vector2i = Vector2i(-999, -999)
 
 const HEX_SIZE = 55.0
 

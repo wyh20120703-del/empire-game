@@ -239,6 +239,21 @@ func _process(delta: float):
 				a.stamina += 1
 	if not is_net_authority:
 		return
+
+	# 自动向部署目标移动
+	for a in armies:
+		if not is_instance_valid(a): continue
+		if a.deploy_target == Vector2i(-999, -999): continue
+		if a.hex_pos == a.deploy_target:
+			a.deploy_target = Vector2i(-999, -999)
+			continue
+		if a.move_cooldown > 0 or a.stamina <= 0: continue
+		var next = _find_deploy_step(a.hex_pos, a.deploy_target, a.nation_id)
+		if next != Vector2i(-1, -1):
+			try_move_army(a, next)
+		else:
+			a.deploy_target = Vector2i(-999, -999)
+
 	resource_timer += delta
 	if resource_timer >= RESOURCE_TICK:
 		resource_timer = 0.0
@@ -514,7 +529,10 @@ func try_build_army(nation_id: int, deploy_hex: Vector2i = Vector2i(-999, -999))
 			return null
 	n.spend_for_army()
 	n.armies_built += 1
-	return _create_army(nation_id, spawn_hex)
+	var army = _create_army(nation_id, spawn_hex)
+	if spawn_hex != target:
+		army.deploy_target = target
+	return army
 
 func convert_food_to_production(nation_id: int) -> bool:
 	var n = _get_nation(nation_id)
@@ -1169,6 +1187,27 @@ func _run_ai():
 				var expand_nb = _find_expand_move(army.hex_pos, n.id)
 				if expand_nb != Vector2i(-1, -1):
 					try_move_army(army, expand_nb)
+
+func _find_deploy_step(from_hex: Vector2i, to_hex: Vector2i, nation_id: int) -> Vector2i:
+	if from_hex == to_hex: return Vector2i(-1, -1)
+	var queue: Array[Vector2i] = [from_hex]
+	var came_from: Dictionary = {from_hex: Vector2i(-2, -2)}
+	while queue.size() > 0:
+		var cur = queue.pop_front()
+		if cur == to_hex:
+			var step = cur
+			while came_from[step] != from_hex:
+				step = came_from[step]
+			return step
+		for nb in hex_map.get_neighbors(cur):
+			if nb in came_from or not hex_map.is_passable(nb): continue
+			var g = _get_garrison_at(nb)
+			if g != null and g.nation_id != nation_id and not are_allied(nation_id, g.nation_id): continue
+			var c = _get_camp_at(nb)
+			if c != null and c.nation_id != nation_id and not are_allied(nation_id, c.nation_id): continue
+			came_from[nb] = cur
+			queue.append(nb)
+	return Vector2i(-1, -1)
 
 func _find_expand_move(from_hex: Vector2i, nation_id: int) -> Vector2i:
 	var best_target = Vector2i(-1, -1)
