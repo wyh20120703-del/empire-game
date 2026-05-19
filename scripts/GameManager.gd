@@ -236,7 +236,7 @@ func _process(delta: float):
 			a.stamina_regen_timer += delta
 			if a.stamina_regen_timer >= 2.0:
 				a.stamina_regen_timer = 0.0
-				a.stamina += 1
+				a.stamina = a.max_stamina
 	if not is_net_authority:
 		return
 
