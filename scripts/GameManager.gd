@@ -27,6 +27,8 @@ var _army_prev_pos: Dictionary = {}
 var alliances: Array = []          # [[id,id,...], ...]
 var pending_requests: Array = []   # [{from_id, to_id}, ...]
 
+var camps: Array = []
+
 var net_mode: bool = false
 var is_net_authority: bool = true
 var _net_timer: float = 0.0
@@ -81,7 +83,102 @@ func _spawn_nations(count: int):
 		cap_g.hp = 2100
 		cap_g.max_hp = 2100
 		cap_g.attack = 120
+		# 初始军队集中营（在首都旁）
+		var camp_pos = _find_adjacent_camp_pos(positions[i])
+		if camp_pos != Vector2i(-999, -999):
+			_create_camp(i, camp_pos)
+			n.camps_built += 1
 		nations.append(n)
+
+# ── 军队集中营 ─────────────────────────────────────────
+
+func _create_camp(nation_id: int, hex: Vector2i) -> MilitaryCamp:
+	var c = MilitaryCamp.new()
+	c.nation_id = nation_id
+	c.nation_color = _nation_colors[nation_id]
+	c.set_hex_pos(hex)
+	hex_map.add_child(c)
+	camps.append(c)
+	return c
+
+func _get_camp_at(hex: Vector2i):
+	for c in camps:
+		if is_instance_valid(c) and c.hex_pos == hex:
+			return c
+	return null
+
+func _get_camps_of(nation_id: int) -> Array:
+	var result = []
+	for c in camps:
+		if is_instance_valid(c) and c.nation_id == nation_id:
+			result.append(c)
+	return result
+
+func _get_nearest_camp(nation_id: int, target_hex: Vector2i):
+	var nearest = null
+	var min_dist = 999999
+	for c in _get_camps_of(nation_id):
+		var d = hex_map.hex_distance(c.hex_pos, target_hex)
+		if d < min_dist:
+			min_dist = d
+			nearest = c
+	return nearest
+
+func _find_adjacent_camp_pos(capital_pos: Vector2i) -> Vector2i:
+	for nb in hex_map.get_neighbors(capital_pos):
+		if hex_map.is_passable(nb) and _get_garrison_at(nb) == null and _get_camp_at(nb) == null:
+			return nb
+	return Vector2i(-999, -999)
+
+func has_camp_at(hex: Vector2i) -> bool:
+	return _get_camp_at(hex) != null
+
+func can_build_camp_at(nation_id: int, hex: Vector2i) -> bool:
+	var n = _get_nation(nation_id)
+	if n == null or n.camps_built >= Nation.MAX_CAMPS: return false
+	if hex_map.get_tile_owner(hex) != nation_id: return false
+	var t = hex_map.get_terrain(hex)
+	if t != TerrainType.Type.PLAINS and t != TerrainType.Type.DESERT: return false
+	if _get_garrison_at(hex) != null: return false
+	if _get_camp_at(hex) != null: return false
+	if hex in hex_map.farm_data or hex in hex_map.mine_data: return false
+	return true
+
+func try_build_camp(nation_id: int, hex: Vector2i):
+	var n = _get_nation(nation_id)
+	if n == null or not can_build_camp_at(nation_id, hex): return null
+	if n.production < Nation.CAMP_COST_PROD: return null
+	n.production -= Nation.CAMP_COST_PROD
+	n.camps_built += 1
+	nation_resource_updated.emit(nation_id)
+	return _create_camp(nation_id, hex)
+
+func try_demolish_camp(nation_id: int, hex: Vector2i) -> bool:
+	var c = _get_camp_at(hex)
+	if c == null or c.nation_id != nation_id: return false
+	var n = _get_nation(nation_id)
+	if n:
+		n.production += 30.0
+		n.camps_built -= 1
+	camps.erase(c)
+	c.queue_free()
+	nation_resource_updated.emit(nation_id)
+	return true
+
+func _resolve_army_vs_camp(army, camp, camp_hex: Vector2i):
+	var camp_dead = camp.take_damage(army.attack)
+	var army_dead = army.take_damage(camp.attack)
+	if camp_dead:
+		var owner = camp.nation_id
+		camps.erase(camp)
+		camp.queue_free()
+		var n = _get_nation(owner)
+		if n: n.camps_built -= 1
+		if not army_dead:
+			army.move_to(camp_hex)
+			_claim_tile(camp_hex, army.nation_id)
+	if army_dead:
+		_remove_army(army)
 
 func _claim_bfs(start: Vector2i, nation_id: int, count: int):
 	var claimed = 0
@@ -273,7 +370,7 @@ func can_build_garrison_at(nation_id: int, hex: Vector2i) -> bool:
 	var t = hex_map.get_terrain(hex)
 	if t != TerrainType.Type.PLAINS and t != TerrainType.Type.DESERT:
 		return false
-	if _get_garrison_at(hex) != null:
+	if _get_garrison_at(hex) != null or _get_camp_at(hex) != null:
 		return false
 	if hex in hex_map.farm_data or hex in hex_map.mine_data:
 		return false
@@ -283,7 +380,7 @@ func can_build_farm_at(nation_id: int, hex: Vector2i) -> bool:
 	if hex_map.get_tile_owner(hex) != nation_id: return false
 	var t = hex_map.get_terrain(hex)
 	if t != TerrainType.Type.PLAINS and t != TerrainType.Type.DESERT: return false
-	if _get_garrison_at(hex) != null: return false
+	if _get_garrison_at(hex) != null or _get_camp_at(hex) != null: return false
 	if hex in hex_map.farm_data or hex in hex_map.mine_data: return false
 	return true
 
@@ -291,7 +388,7 @@ func can_build_mine_at(nation_id: int, hex: Vector2i) -> bool:
 	if hex_map.get_tile_owner(hex) != nation_id: return false
 	var t = hex_map.get_terrain(hex)
 	if t != TerrainType.Type.PLAINS and t != TerrainType.Type.DESERT: return false
-	if _get_garrison_at(hex) != null: return false
+	if _get_garrison_at(hex) != null or _get_camp_at(hex) != null: return false
 	if hex in hex_map.farm_data or hex in hex_map.mine_data: return false
 	return true
 
@@ -391,18 +488,31 @@ func try_build_army(nation_id: int, deploy_hex: Vector2i = Vector2i(-999, -999))
 	var n = _get_nation(nation_id)
 	if n == null or not n.can_build_army():
 		return null
+	# 确定目标格（用于找最近集中营）
 	var target = n.capital_pos
 	if deploy_hex != Vector2i(-999, -999):
 		var deploy_t = hex_map.get_terrain(deploy_hex)
 		if hex_map.get_tile_owner(deploy_hex) == nation_id and \
 		   (deploy_t == TerrainType.Type.PLAINS or deploy_t == TerrainType.Type.DESERT):
 			target = deploy_hex
-	# 目标格已有己方军队则禁止建造
-	if _get_army_at(target) != null:
+	# 从最近的军队集中营出发
+	var nearest_camp = _get_nearest_camp(nation_id, target)
+	if nearest_camp == null:
 		return null
+	var spawn_hex = nearest_camp.hex_pos
+	# 集中营被占则找旁边空格
+	if _get_army_at(spawn_hex) != null:
+		var found = false
+		for nb in hex_map.get_neighbors(spawn_hex):
+			if hex_map.is_passable(nb) and hex_map.get_tile_owner(nb) == nation_id and _get_army_at(nb) == null:
+				spawn_hex = nb
+				found = true
+				break
+		if not found:
+			return null
 	n.spend_for_army()
 	n.armies_built += 1
-	return _create_army(nation_id, target)
+	return _create_army(nation_id, spawn_hex)
 
 func convert_food_to_production(nation_id: int) -> bool:
 	var n = _get_nation(nation_id)
@@ -475,10 +585,17 @@ func try_move_army(army, target_hex: Vector2i) -> bool:
 	if existing_army != null and (existing_army.nation_id == army.nation_id or are_allied(army.nation_id, existing_army.nation_id)):
 		return false
 
-	# 敌方部署地：就地攻击，不移动，必须消灭才能进入
+	# 敌方部署地：就地攻击；盟友/己方部署地直接通过
 	var enemy_garrison = _get_garrison_at(target_hex)
 	if enemy_garrison != null and enemy_garrison.nation_id != army.nation_id and not are_allied(army.nation_id, enemy_garrison.nation_id):
 		_resolve_army_vs_garrison(army, enemy_garrison, target_hex)
+		hex_map.queue_redraw()
+		return true
+
+	# 敌方集中营：就地攻击；盟友/己方集中营直接通过
+	var camp_at = _get_camp_at(target_hex)
+	if camp_at != null and camp_at.nation_id != army.nation_id and not are_allied(army.nation_id, camp_at.nation_id):
+		_resolve_army_vs_camp(army, camp_at, target_hex)
 		hex_map.queue_redraw()
 		return true
 
@@ -646,6 +763,10 @@ func _defeat_nation(nation_id: int, conqueror_id: int):
 	for g in to_remove_g:
 		garrisons.erase(g)
 		g.queue_free()
+	var to_remove_c = camps.filter(func(c): return c.nation_id == nation_id)
+	for c in to_remove_c:
+		camps.erase(c)
+		c.queue_free()
 	nation_defeated.emit(nation_id)
 	var alive = nations.filter(func(na): return not na.is_defeated)
 	if alive.size() == 1:
@@ -872,7 +993,7 @@ func _general_attack(n: Nation):
 		var attacked = false
 		for nb in hex_map.get_neighbors(army.hex_pos):
 			var g = _get_garrison_at(nb)
-			if g != null and g.nation_id != n.id:
+			if g != null and g.nation_id != n.id and not are_allied(n.id, g.nation_id):
 				try_move_army(army, nb)
 				attacked = true; break
 		if attacked: return
@@ -919,6 +1040,12 @@ func _run_ai():
 	for n in nations:
 		if n.is_defeated or n.id in _player_nation_ids:
 			continue
+		# 优先建造军队集中营（没有时第一件事）
+		if _get_camps_of(n.id).is_empty() and n.production >= Nation.CAMP_COST_PROD:
+			for tile in hex_map.get_nation_tiles(n.id):
+				if can_build_camp_at(n.id, tile):
+					try_build_camp(n.id, tile)
+					break
 		# 建造农田（人口≥20时优先建）
 		if n.population >= 20:
 			var farm_cnt = 0
@@ -1013,7 +1140,7 @@ func _run_ai():
 			var attacked = false
 			for nb in hex_map.get_neighbors(army.hex_pos):
 				var g = _get_garrison_at(nb)
-				if g != null and g.nation_id != n.id:
+				if g != null and g.nation_id != n.id and not are_allied(n.id, g.nation_id):
 					try_move_army(army, nb)
 					attacked = true
 					break
@@ -1070,7 +1197,7 @@ func _find_nearest_enemy_capital(nation_id: int, from_hex: Vector2i) -> Vector2i
 	var best = Vector2i(-1, -1)
 	var best_dist = 999999
 	for n in nations:
-		if n.id == nation_id or n.is_defeated:
+		if n.id == nation_id or n.is_defeated or are_allied(nation_id, n.id):
 			continue
 		var d = hex_map.hex_distance(from_hex, n.capital_pos)
 		if d < best_dist:
@@ -1160,10 +1287,12 @@ func _net_action(action: String, params: Dictionary):
 		"build_garrison":    try_build_garrison(pid, params.get("hex", Vector2i(-999,-999)))
 		"build_farm":        try_build_farm(pid, params.get("hex", Vector2i(-999,-999)))
 		"build_mine":        try_build_mine(pid, params.get("hex", Vector2i(-999,-999)))
+		"build_camp":        try_build_camp(pid, params.get("hex", Vector2i(-999,-999)))
 		"disband_army":      try_disband_army(pid, params.get("hex", Vector2i(-999,-999)))
 		"demolish_garrison": try_demolish_garrison(pid, params.get("hex", Vector2i(-999,-999)))
 		"demolish_farm":     try_demolish_farm(pid, params.get("hex", Vector2i(-999,-999)))
 		"demolish_mine":     try_demolish_mine(pid, params.get("hex", Vector2i(-999,-999)))
+		"demolish_camp":     try_demolish_camp(pid, params.get("hex", Vector2i(-999,-999)))
 		"move_army":
 			var from_hex = params.get("from", Vector2i(-999,-999))
 			var to_hex   = params.get("to",   Vector2i(-999,-999))
@@ -1231,7 +1360,7 @@ func _build_state() -> Dictionary:
 			"cx": n.capital_pos.x, "cy": n.capital_pos.y,
 			"ab": n.armies_built, "fb": n.farms_built,
 			"mb": n.mines_built, "gb": n.garrisons_built,
-			"ke": n.nations_eliminated
+			"cb": n.camps_built, "ke": n.nations_eliminated
 		})
 	var army_arr = []
 	for a in armies:
@@ -1244,6 +1373,10 @@ func _build_state() -> Dictionary:
 				"nid": g.nation_id, "x": g.hex_pos.x, "y": g.hex_pos.y,
 				"hp": g.hp, "mhp": g.max_hp, "cap": g.is_capital
 			})
+	var camp_arr = []
+	for c in camps:
+		if is_instance_valid(c):
+			camp_arr.append({"nid": c.nation_id, "x": c.hex_pos.x, "y": c.hex_pos.y, "hp": c.hp})
 	var own = {}
 	for hex in hex_map.owner_data:
 		own["%d_%d" % [hex.x, hex.y]] = hex_map.owner_data[hex]
@@ -1258,7 +1391,7 @@ func _build_state() -> Dictionary:
 		caps["%d_%d" % [hex.x, hex.y]] = hex_map.capital_data[hex]
 	var result = {
 		"nations": nd_arr, "armies": army_arr, "garrisons": gar_arr,
-		"alliances": alliances.duplicate(true), "active": game_active
+		"mil_camps": camp_arr, "alliances": alliances.duplicate(true), "active": game_active
 	}
 	if _territory_dirty:
 		result["owner"] = own
@@ -1281,7 +1414,7 @@ func _apply_state(state: Dictionary):
 		n.capital_pos = Vector2i(nd.cx, nd.cy)
 		n.armies_built = nd.get("ab", 0); n.farms_built = nd.get("fb", 0)
 		n.mines_built = nd.get("mb", 0); n.garrisons_built = nd.get("gb", 0)
-		n.nations_eliminated = nd.get("ke", 0)
+		n.camps_built = nd.get("cb", 0); n.nations_eliminated = nd.get("ke", 0)
 		if not was_dead and n.is_defeated:
 			nation_defeated.emit(n.id)
 
@@ -1329,6 +1462,28 @@ func _apply_state(state: Dictionary):
 			var g = _create_garrison(gd.nid, hex)
 			g.hp = gd.hp; g.max_hp = gd.mhp; g.is_capital = gd.cap
 			g.queue_redraw()
+
+	# 差量更新军队集中营
+	var camp_set: Dictionary = {}
+	for cd in state.get("mil_camps", []):
+		camp_set["%d_%d" % [cd.x, cd.y]] = cd
+	for c in camps.duplicate():
+		if not is_instance_valid(c): continue
+		var k = "%d_%d" % [c.hex_pos.x, c.hex_pos.y]
+		if not k in camp_set:
+			camps.erase(c)
+			c.queue_free()
+	for k in camp_set:
+		var cd = camp_set[k]
+		var hex = Vector2i(cd.x, cd.y)
+		var existing = _get_camp_at(hex)
+		if existing != null:
+			existing.hp = cd.hp
+			existing.queue_redraw()
+		else:
+			var c = _create_camp(cd.nid, hex)
+			c.hp = cd.hp
+			c.queue_redraw()
 
 	# 应用领土、农田、矿洞、首都
 	for k in state.get("owner", {}):
@@ -1418,6 +1573,9 @@ func _net_do_restart():
 	for g in garrisons.duplicate():
 		garrisons.erase(g)
 		g.queue_free()
+	for c in camps.duplicate():
+		camps.erase(c)
+		c.queue_free()
 	nations.clear()
 	alliances.clear()
 	pending_requests.clear()
@@ -1438,6 +1596,9 @@ func reset_game():
 	for g in garrisons.duplicate():
 		garrisons.erase(g)
 		g.queue_free()
+	for c in camps.duplicate():
+		camps.erase(c)
+		c.queue_free()
 	hex_map.owner_data.clear()
 	hex_map.capital_data.clear()
 	hex_map.farm_data.clear()

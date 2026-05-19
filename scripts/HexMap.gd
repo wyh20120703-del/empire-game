@@ -30,6 +30,43 @@ func generate_map():
 			terrain_data[hex] = t
 			owner_data[hex] = -1
 
+	# 找最大连通可通行区域，孤立的草地/沙漠改为山地
+	_keep_largest_passable_region()
+
+func _keep_largest_passable_region():
+	var passable: Array[Vector2i] = []
+	for hex in terrain_data:
+		if is_passable(hex):
+			passable.append(hex)
+
+	var visited: Dictionary = {}
+	var largest: Array[Vector2i] = []
+
+	for start in passable:
+		if start in visited:
+			continue
+		var component: Array[Vector2i] = []
+		var queue: Array[Vector2i] = [start]
+		visited[start] = true
+		while queue.size() > 0:
+			var cur = queue.pop_front()
+			component.append(cur)
+			for nb in get_neighbors(cur):
+				if nb in visited or not is_passable(nb):
+					continue
+				visited[nb] = true
+				queue.append(nb)
+		if component.size() > largest.size():
+			largest = component
+
+	var largest_set: Dictionary = {}
+	for hex in largest:
+		largest_set[hex] = true
+
+	for hex in passable:
+		if not hex in largest_set:
+			terrain_data[hex] = TerrainType.Type.MOUNTAIN
+
 func hex_to_pixel(hex: Vector2i) -> Vector2:
 	var x = HEX_SIZE * (3.0 / 2.0 * hex.x)
 	var y = HEX_SIZE * (sqrt(3) / 2.0 * hex.x + sqrt(3) * hex.y)

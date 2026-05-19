@@ -21,14 +21,17 @@ var armies_built: int = 0
 var farms_built: int = 0
 var mines_built: int = 0
 var garrisons_built: int = 0
+var camps_built: int = 0
 var nations_eliminated: int = 0
 
 const ARMY_COST_PROD: float = 20.0
 const ARMY_COST_FOOD: float = 10.0
 const MAX_GENERALS: int = 3
 const MAX_MINISTERS: int = 3
+const MAX_CAMPS: int = 3
 const GENERAL_COST: float = 120.0
 const MINISTER_COST: float = 100.0
+const CAMP_COST_PROD: float = 60.0
 
 func can_build_army() -> bool:
 	return production >= ARMY_COST_PROD and food >= ARMY_COST_FOOD

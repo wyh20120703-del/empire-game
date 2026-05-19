@@ -22,6 +22,7 @@ var ctx_army_btn: Button
 var ctx_garrison_btn: Button
 var ctx_farm_btn: Button
 var ctx_mine_btn: Button
+var ctx_camp_btn: Button
 var selected_hex: Vector2i = Vector2i(-999, -999)
 
 var dragging: bool = false
@@ -322,6 +323,7 @@ func _input(event: InputEvent):
 			KEY_G: _ctx_action("garrison")
 			KEY_E: _ctx_action("farm")
 			KEY_R: _ctx_action("mine")
+			KEY_F: _ctx_action("camp")
 			KEY_D: _ctx_action("demolish")
 			KEY_J: _on_general_pressed()
 			KEY_P: _on_general_stance_pressed()
@@ -780,7 +782,8 @@ func _setup_context_panel():
 	ctx_garrison_btn = _make_ctx_btn(btn_h, btn_fs, _on_ctx_garrison)
 	ctx_farm_btn     = _make_ctx_btn(btn_h, btn_fs, _on_ctx_farm)
 	ctx_mine_btn     = _make_ctx_btn(btn_h, btn_fs, _on_ctx_mine)
-	for btn in [ctx_army_btn, ctx_garrison_btn, ctx_farm_btn, ctx_mine_btn]:
+	ctx_camp_btn     = _make_ctx_btn(btn_h, btn_fs, _on_ctx_camp)
+	for btn in [ctx_army_btn, ctx_garrison_btn, ctx_farm_btn, ctx_mine_btn, ctx_camp_btn]:
 		context_panel.add_child(btn)
 
 func _make_ctx_btn(h: int, fs: int, cb: Callable) -> Button:
@@ -799,6 +802,7 @@ func _show_context(hex: Vector2i):
 	var is_land = terrain == TerrainType.Type.PLAINS or terrain == TerrainType.Type.DESERT
 	var has_army = game_manager.has_army_at(hex)
 	var has_g = game_manager.has_garrison_at(hex)
+	var has_camp = game_manager.has_camp_at(hex)
 	var has_farm = hex in hm.farm_data
 	var has_mine = hex in hm.mine_data
 
@@ -806,6 +810,7 @@ func _show_context(hex: Vector2i):
 	var what = []
 	if has_army:  what.append("军队")
 	if has_g:     what.append("部署地")
+	if has_camp:  what.append("集中营")
 	if has_farm:  what.append("农田")
 	if has_mine:  what.append("矿洞")
 	ctx_title.text = "【%s】%s" % [TerrainType.get_terrain_name(terrain), " ".join(what)]
@@ -814,7 +819,7 @@ func _show_context(hex: Vector2i):
 	if has_army:
 		ctx_army_btn.text = "解散军队 [D]  →+20产+10粮"
 		ctx_army_btn.visible = true
-	elif is_land and not has_g and n:
+	elif is_land and not has_g and not has_camp and n:
 		ctx_army_btn.text = "建造军队 [B]  (20产+10粮)"
 		ctx_army_btn.visible = true
 	else:
@@ -845,14 +850,24 @@ func _show_context(hex: Vector2i):
 	if has_mine:
 		ctx_mine_btn.text = "拆除矿洞 [D]  →+10人口"
 		ctx_mine_btn.visible = true
-	elif is_land and not has_g and not has_farm and n:
+	elif is_land and not has_g and not has_camp and not has_farm and n:
 		ctx_mine_btn.text = "建造矿洞 [R]  (10人口)"
 		ctx_mine_btn.visible = true
 	else:
 		ctx_mine_btn.visible = false
 
+	# 集中营按钮
+	if has_camp:
+		ctx_camp_btn.text = "拆除集中营 [D]  →+30产"
+		ctx_camp_btn.visible = true
+	elif is_land and not has_g and not has_army and not has_farm and not has_mine and n and n.camps_built < Nation.MAX_CAMPS:
+		ctx_camp_btn.text = "建造集中营 [F]  (60产)  %d/%d" % [n.camps_built, Nation.MAX_CAMPS]
+		ctx_camp_btn.visible = true
+	else:
+		ctx_camp_btn.visible = false
+
 	# 布局按钮位置
-	var btns = [ctx_army_btn, ctx_garrison_btn, ctx_farm_btn, ctx_mine_btn]
+	var btns = [ctx_army_btn, ctx_garrison_btn, ctx_farm_btn, ctx_mine_btn, ctx_camp_btn]
 	var cy = 36
 	for btn in btns:
 		if btn.visible:
@@ -977,6 +992,34 @@ func _on_ctx_mine():
 	_update_resource_display()
 	_show_context(selected_hex)
 
+func _on_ctx_camp():
+	if selected_hex == Vector2i(-999, -999): return
+	if _is_client():
+		if game_manager.has_camp_at(selected_hex):
+			_send_net_action("demolish_camp", {"hex": selected_hex})
+			selected_label.text = "已发送：拆除集中营"
+		else:
+			_send_net_action("build_camp", {"hex": selected_hex})
+			selected_label.text = "已发送：建造集中营"
+		return
+	if game_manager.has_camp_at(selected_hex):
+		if game_manager.try_demolish_camp(game_manager.PLAYER_ID, selected_hex):
+			selected_label.text = "集中营已拆除，返还30产"
+	else:
+		var n = game_manager.get_player_nation()
+		if n and n.production < Nation.CAMP_COST_PROD:
+			selected_label.text = "产量不足（需60，当前%d）" % int(n.production)
+			return
+		if n and n.camps_built >= Nation.MAX_CAMPS:
+			selected_label.text = "集中营已达上限（%d/%d）" % [n.camps_built, Nation.MAX_CAMPS]
+			return
+		if game_manager.try_build_camp(game_manager.PLAYER_ID, selected_hex) != null:
+			selected_label.text = "集中营已建造！军队将从此处出发"
+		else:
+			selected_label.text = "无法建造集中营"
+	_update_resource_display()
+	_show_context(selected_hex)
+
 func _ctx_action(action: String):
 	if selected_hex == Vector2i(-999, -999):
 		selected_label.text = "请先点击己方格子"
@@ -986,6 +1029,7 @@ func _ctx_action(action: String):
 		"garrison": _on_ctx_garrison()
 		"farm":     _on_ctx_farm()
 		"mine":     _on_ctx_mine()
+		"camp":     _on_ctx_camp()
 		"demolish":
 			if _is_client():
 				_send_net_action("disband_army", {"hex": selected_hex})
@@ -995,6 +1039,8 @@ func _ctx_action(action: String):
 				selected_label.text = "军队已解散，返还20产+10粮"
 			elif game_manager.try_demolish_garrison(game_manager.PLAYER_ID, selected_hex):
 				selected_label.text = "部署地已拆除，返还30产"
+			elif game_manager.try_demolish_camp(game_manager.PLAYER_ID, selected_hex):
+				selected_label.text = "集中营已拆除，返还30产"
 			elif game_manager.try_demolish_farm(game_manager.PLAYER_ID, selected_hex):
 				selected_label.text = "农田已拆除，返还10人口"
 			elif game_manager.try_demolish_mine(game_manager.PLAYER_ID, selected_hex):
