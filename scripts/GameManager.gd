@@ -1,6 +1,8 @@
 class_name GameManager
 extends Node
 
+const MilitaryCampScene = preload("res://scripts/MilitaryCamp.gd")
+
 signal nation_resource_updated(nation_id: int)
 signal nation_defeated(nation_id: int)
 signal game_over(winner_name: String)
@@ -92,8 +94,8 @@ func _spawn_nations(count: int):
 
 # ── 军队集中营 ─────────────────────────────────────────
 
-func _create_camp(nation_id: int, hex: Vector2i) -> MilitaryCamp:
-	var c = MilitaryCamp.new()
+func _create_camp(nation_id: int, hex: Vector2i):
+	var c = MilitaryCampScene.new()
 	c.nation_id = nation_id
 	c.nation_color = _nation_colors[nation_id]
 	c.set_hex_pos(hex)
